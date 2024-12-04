@@ -126,6 +126,8 @@ void opcontrol() {
   std::bool x_was_pressed = false;
   std::bool y_was_pressed = false;
 
+  std::bool was_pressed = false;
+
   std::bool l1_was_pressed = false;
   std::bool l2_was_pressed = false;
 
@@ -250,12 +252,27 @@ void opcontrol() {
       if (master.get_digital(DIGITAL_Y) && !y_was_pressed) {
 
         // Script for climbing
-        shoulder.move_absolute(0, 127); // TODO: Replace 0 with actial value
+        shoulder.move_absolute(0, 127); // TODO: Replace 0 with actual value
         elbow.move_absolute(0, 127);
 
         y_was_pressed = true;
       } else if (!master.get_digital(DIGITAL_Y) && y_was_pressed) {
         y_was_pressed = false;
+      }
+
+    } else {
+
+      // Preset positions
+      for (auto const& [key, value] : arm_positions) {
+        if (master.get_digital(key) && !was_pressed) {
+
+          shoulder.move_absolute(value.first, 127);
+          elbow.move_absolute(value.second, 127);
+
+          was_pressed = true;
+        } else if (!master.get_digital(key) && was_pressed) {
+          was_pressed = false;
+        }
       }
 
     }
