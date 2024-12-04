@@ -1,7 +1,7 @@
 {
     "py/object": "pros.conductor.project.Project",
     "py/state": {
-        "project_name": "BRG",
+        "project_name": "BRGOS",
         "target": "v5",
         "templates": {
             "kernel": {

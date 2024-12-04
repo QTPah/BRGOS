@@ -30,7 +30,19 @@ constexpr int MAX_SHOULDER_POSITION = 100; // Maximum shoulder position in degre
 
 constexpr int MIN_ELBOW_POSITION = 0; // Minimum elbow position in degrees
 constexpr int MAX_ELBOW_POSITION = 100; // Maximum elbow position in degrees
+                                        
 
+const std::pair<int, int> PRESET_POS_PICKUP = {0, 0};
+const std::pair<int, int> PRESET_POS_TOWER = {50, 30};
+const std::pair<int, int> PRESET_POS_SWEEP = {75, 90};
+const std::pair<int, int> PRESET_POS_CLIMB = {10, 10};
+                                        
+std::map<int, std::pair<int, int>> arm_positions = {
+  {DIGITAL_A, PRESET_POS_PICKUP},
+  {DIGITAL_B, PRESET_POS_TOWER},
+  {DIGITAL_X, PRESET_POS_SWEEP},
+  {DIGITAL_Y, PRESET_POS_CLIMB}
+};
 
 // ========================
 
@@ -71,6 +83,7 @@ void competition_initialize() {}
  */
 void autonomous() {}
 
+
 /**
  * Runs the operator control code. This function will be started in its own task
  * with the default priority and stack size whenever the robot is enabled via
@@ -100,20 +113,30 @@ void opcontrol() {
   pros::ADIDigitalOut inner_piston(INNER_PISTON_PORT, false);
   pros::ADIDigitalOut outer_piston(OUTER_PISTON_PORT, false);
 
+  // Set motor brake brake mode 
+  left_m.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+  right_m.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+
   std::uint32_t shoulder_hold = 0, elbow_hold = 0;
 
-  std::bool percision_mode = false;
-  std::bool quick_mode = false;
+  std::bool attack_mode = false;
 
+  std::bool a_was_pressed = false;
+  std::bool b_was_pressed = false;
+  std::bool x_was_pressed = false;
+  std::bool y_was_pressed = false;
+
+  std::bool l1_was_pressed = false;
+  std::bool l2_was_pressed = false;
+
+  std::uint32_t flash_counter = 0;
 
 	while (true) {
 
     // ======== Drivetrain control ========
-		int dir = master.get_analog(ANALOG_LEFT_Y) * (percision_mode ? SLOW_DRIVETRAIN_SPEED :
-                                                  quick_mode ? 100 : REGULAR_DRIVETRAIN_SPEED)
+		int dir = master.get_analog(ANALOG_LEFT_Y) * (master.get_digital(DIGITAL_R2) ? SLOW_DRIVETRAIN_SPEED : attack_mode ? 100 : REGULAR_DRIVETRAIN_SPEED)
                                                   / 100;
-		int turn = master.get_analog(ANALOG_LEFT_X) * (percision_mode ? SLOW_TURN_SPEED :
-                                                  quick_mode ? (100 / (dir/2)) : REGULAR_TURN_SPEED) // Turn speed is slower in quick mode when driving fast
+		int turn = master.get_analog(ANALOG_LEFT_X) * (master.get_digital(DIGITAL_R2) ? SLOW_TURN_SPEED : attack_mode ? (100 / (dir/2)) : REGULAR_TURN_SPEED) // Turn speed is slower in attack mode when driving fast
                                                   / 100;
 		left_m.move(dir - turn);
 		right_m.move(dir + turn);
@@ -122,58 +145,122 @@ void opcontrol() {
 
     // Using seperate if statements for simultaneous button presses
 
-    if (master.get_digital(DIGITAL_L1)) {
+    if (master.get_digital(DIGITAL_L1) && !l1_was_pressed) {
       inner_piston.set_value(!inner_piston.get_value());      // Toggle inner inner_piston
-    } 
+      l1_was_pressed = true;
+    } else if (!master.get_digital(DIGITAL_L1) && l1_was_pressed) {
+      l1_was_pressed = false;
+    }
 
-    if (master.get_digital(DIGITAL_L2)) {
+    if (master.get_digital(DIGITAL_L2) && !l2_was_pressed) {
       outer_piston.set_value(!outer_piston.get_value());       // Toggle outer inner_piston
+      l2_was_pressed = true;
+    } else if (!master.get_digital(DIGITAL_L2) && l2_was_pressed) {
+      l2_was_pressed = false;
     }
 
    
     // ======== Manual arm control ========
-    
-    std::bool arm_moved = false;
 
-    if (master.get_analog(ANALOG_RIGHT_Y) != 0 && master.get_digital(DIGITAL_R1)) {
-
-      // Limit shoulder Movement
+    // Shoulder Movement (Controlled by Right Joystick Y-axis)
+    if (master.get_analog(ANALOG_RIGHT_Y) != 0) {
+      // Limit shoulder movement
       if (
-          (master.get_analog(ANALOG_RIGHT_Y) > 0 && shoulder.get_position() < MAX_SHOULDER_POSITION) ||
-          (master.get_analog(ANALOG_RIGHT_Y) < 0 && shoulder.get_position() > MIN_SHOULDER_POSITION)
+          (master.get_analog(ANALOG_RIGHT_Y) > 0 && (shoulder.get_position() < MAX_SHOULDER_POSITION || master.get_digital(DIGITAL_LEFT))) ||
+          (master.get_analog(ANALOG_RIGHT_Y) < 0 && (shoulder.get_position() > MIN_SHOULDER_POSITION || master.get_digital(DIGITAL_LEFT)))
       ) {
-        shoulder.move(master.get_analog(ANALOG_RIGHT_Y) * SHOULDER_SPEED / 100);
+        shoulder.move(master.get_analog(ANALOG_RIGHT_Y) * (attack_mode ? 100 : SHOULDER_SPEED) / 100);
         shoulder_hold = shoulder.get_position();
-        arm_moved = true;
       }
-
-    } else if (master.get_analog(ANALOG_RIGHT_Y) != 0 && master.get_digital(DIGITAL_R2)) {
-
-      // Limit elbow Movement
-      if (
-          (master.get_analog(ANALOG_RIGHT_Y) > 0 && elbow.get_position() < MAX_ELBOW_POSITION) ||
-          (master.get_analog(ANALOG_RIGHT_Y) < 0 && elbow.get_position() > MIN_ELBOW_POSITION)
-      ) {
-        elbow.move(master.get_analog(ANALOG_RIGHT_Y) * ELBOW_SPEED / 100);
-        elbow_hold = elbow.get_position();
-        arm_moved = true;
-      }
-
+    } else {
+      // Hold shoulder position if no input
+      shoulder.move_absolute(shoulder_hold, 127);
     }
 
-    if (!arm_moved) {
-      // Hold arm position
-      shoulder.move_absolute(shoulder_hold, 127);
+    // Elbow Movement (Controlled by Right Joystick X-axis)
+    if (master.get_analog(ANALOG_RIGHT_X) != 0) {
+      // Limit elbow movement
+      if (
+          (master.get_analog(ANALOG_RIGHT_X) > 0 && (elbow.get_position() < MAX_ELBOW_POSITION) || master.get_digital(DIGITAL_LEFT)) ||
+          (master.get_analog(ANALOG_RIGHT_X) < 0 && (elbow.get_position() > MIN_ELBOW_POSITION || master.get_digital(DIGITAL_LEFT)))
+      ) {
+        elbow.move(master.get_analog(ANALOG_RIGHT_X) * (attack_mode ? 100 : ELBOW_SPEED) / 100);
+        elbow_hold = elbow.get_position();
+      }
+    } else {
+      // Hold elbow position if no input
       elbow.move_absolute(elbow_hold, 127);
-
     }
 
     // ===================================
 
+    // ======== Misc ========
+    // Tare arm motors
+    if (master.get_digital(DIGITAL_RIGHT)) {
+      shoulder.tare_position();
+      elbow.tare_position();
 
-    // TODO: Add button to toggle percision and quick mode,
-    // add free movement mode for arm to tare position,
+      shoulder_hold = 0;
+      elbow_hold = 0;
+    }
+
+    // Percision mode 
+    if (master.get_digital(DIGITAL_UP)) {
+      percision_mode = !percision_mode;
+    }
+
+    // Flash screens when in attack mode 
+
+    if (attack_mode) {
+      if (flash_counter % 10 == 0) {
+        pros::lcd::set_background_color(255, 0, 0);
+      } else {
+        pros::lcd::set_background_color(0, 0, 0);
+      }
+
+      flash_counter++;
+    } else {
+    }
+
+    // ========================
+    
+
+    // TODO:
+    // add temperature checks for motors on controller screen,
     // add movement presets for; preparing to climb, climbing, preparing to pick up ring, prepare to place ring, prepare to sweep ring, attack mode etc.
+    
+    // ======== Presets ========
+    
+    if (master.get_digital(DIGITAL_R1)) {
+      
+      // Attack mode
+      if (master.get_digital(DIGITAL_X) && !x_was_pressed) {
+        attack_mode = !attack_mode;
+
+        if (!attack_mode) {
+          pros::lcd::set_background_color(0, 0, 0);
+        }
+
+        x_was_pressed = true;
+      } else if (!master.get_digital(DIGITAL_X) && x_was_pressed) {
+        x_was_pressed = false;
+      }
+
+      // Climb
+      if (master.get_digital(DIGITAL_Y) && !y_was_pressed) {
+
+        // Script for climbing
+        shoulder.move_absolute(0, 127); // TODO: Replace 0 with actial value
+        elbow.move_absolute(0, 127);
+
+        y_was_pressed = true;
+      } else if (!master.get_digital(DIGITAL_Y) && y_was_pressed) {
+        y_was_pressed = false;
+      }
+
+    }
+
+    // =========================
 
 
 		pros::delay(20);
